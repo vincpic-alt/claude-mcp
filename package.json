@@ -1,0 +1,17 @@
+{
+  "name": "callin-mcp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file=.env src/server.js",
+    "dev": "node --env-file=.env --watch src/server.js",
+    "test": "node --test test/*.test.js",
+    "lint": "node --check src/server.js && node --check src/backend.js && node --check src/tools.js && node --check src/store.js",
+    "typecheck": "node --check src/server.js && node --check src/backend.js && node --check src/tools.js && node --check src/store.js",
+    "build": "node --check src/server.js && node --check src/backend.js && node --check src/tools.js && node --check src/store.js"
+  }
+}

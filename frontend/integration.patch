@@ -1,0 +1,9 @@
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@
++import { McpAuthorize } from './pages/McpAuthorize';
+ import { SignIn } from './pages/Auth/SignIn';
+@@
+       <Routes>
++        <Route path="/mcp/authorize" element={<McpAuthorize />} />
+         <Route path="/signin" element={<ToastProvider><SignIn /></ToastProvider>} />
