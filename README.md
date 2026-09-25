@@ -27,7 +27,7 @@ Data access uses server-side Supabase (service role) with an **immutable `user_i
 
 Scopes also include `account:read` and optional `offline_access` (refresh).
 
-Schema verified against Callin `ai_agents` / `calls` (`user_id`, `transcription_url`, `contact_number`, `direction`, `status`, `agent_id`, …).
+Agents are read only from Callin `generic_agents` (same as the Callin app). Calls use `calls` (`user_id`, `transcription_url`, `contact_number`, `direction`, `status`, `agent_id` / `generic_agent_id`, …). Legacy `ai_agents` is never used for listing agents.
 
 ---
 

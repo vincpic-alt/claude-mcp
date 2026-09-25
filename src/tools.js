@@ -10,12 +10,13 @@ export const tools = [
   [
     'list_agents',
     'List Callin agents',
-    'List voice agents owned by the authenticated Callin account. Supports optional filters for type (inbound/outbound), language code, and agent_type (rag/non-rag). Returns bounded pagination only — never the full agent catalog.',
+    'List voice agents owned by the authenticated Callin account (same agents shown in the Callin app). Supports optional filters for direction (inbound/outbound), language, and provider (callin/vapi/elevenlabs/livekit). Returns bounded pagination only.',
     {
       ...page,
-      type: { type: 'string', enum: ['inbound', 'outbound'] },
+      direction: { type: 'string', enum: ['inbound', 'outbound', 'both'] },
+      type: { type: 'string', enum: ['inbound', 'outbound', 'both'] },
       language: { type: 'string', minLength: 2, maxLength: 16 },
-      agent_type: { type: 'string', enum: ['rag', 'non-rag'] },
+      provider: { type: 'string', enum: ['callin', 'vapi', 'elevenlabs', 'livekit'] },
     },
     [],
     'agents:read',
@@ -23,7 +24,7 @@ export const tools = [
   [
     'get_agent',
     'Get Callin agent',
-    'Get public configuration for one agent owned by the authenticated Callin account. Requires agentId. Returns not found if the agent does not belong to this account. Does not return prompts, webhooks, or secrets.',
+    'Get public configuration for one agent owned by the authenticated Callin account (generic_agents id). Requires agentId. Returns not found if the agent does not belong to this account. Does not return prompts, webhooks, or secrets.',
     { agentId: uuid },
     ['agentId'],
     'agents:read',

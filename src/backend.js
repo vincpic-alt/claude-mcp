@@ -1,10 +1,14 @@
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Columns verified against Callin.io-Team src/lib/types.ts (Agent / Call).
-const AGENT_FIELDS = 'id,title,type,language,max_duration,agent_type,category,created_at';
+// Callin UI lists agents from `generic_agents` (source of truth).
+// Legacy `ai_agents` is only the basic/callin provider sub-table — do not list from it.
+const AGENT_FIELDS =
+  'id,name,direction,provider,primary_language,secondary_languages,category,max_call_duration,assigned_number,created_at,updated_at';
 const CALL_FIELDS =
-  'id,contact_number,direction,status,duration,started_at,ended_at,created_at,agent_id,agent_name,contact_name';
+  'id,contact_number,direction,status,duration,started_at,ended_at,created_at,agent_id,generic_agent_id,agent_name,contact_name';
 const CALL_DETAIL_FIELDS = `${CALL_FIELDS},machine_detected,appointment_scheduled,call_origin,error_message`;
+
+const ALLOWED_TABLES = new Set(['calls', 'generic_agents']);
 
 function sanitizePhone(value) {
   const cleaned = String(value).replace(/[^\d+]/g, '');
@@ -35,7 +39,7 @@ export class Backend {
   }
 
   async query(table, userId, fields, extra = {}) {
-    if (!uuid.test(userId) || !['calls', 'ai_agents'].includes(table)) {
+    if (!uuid.test(userId) || !ALLOWED_TABLES.has(table)) {
       throw new Error('Invalid account');
     }
     // Service key bypasses RLS: immutable ownership filter is mandatory and always last.
@@ -64,7 +68,10 @@ export class Backend {
     const extra = {};
     if (args.direction) extra.direction = `eq.${args.direction}`;
     if (args.status) extra.status = `eq.${args.status}`;
-    if (args.agentId) extra.agent_id = `eq.${args.agentId}`;
+    // Calls may reference legacy ai_agents (agent_id) or generic_agents (generic_agent_id).
+    if (args.agentId) {
+      extra.or = `(agent_id.eq.${args.agentId},generic_agent_id.eq.${args.agentId})`;
+    }
     if (args.contactNumber) extra.contact_number = `eq.${sanitizePhone(args.contactNumber)}`;
     const range = [];
     if (args.startDate) range.push(`gte.${args.startDate}`);
@@ -91,8 +98,8 @@ export class Backend {
   async resolveAgentIdsByTitle(userId, title) {
     const safe = sanitizeIlike(title);
     if (!safe) return [];
-    const agents = await this.query('ai_agents', userId, 'id', {
-      title: `ilike.*${safe}*`,
+    const agents = await this.query('generic_agents', userId, 'id', {
+      name: `ilike.*${safe}*`,
       limit: '50',
     });
     return agents.map((a) => a.id).filter((id) => uuid.test(id));
@@ -131,19 +138,20 @@ export class Backend {
 
     if (name === 'list_agents') {
       const extra = {};
-      if (args.type) extra.type = `eq.${args.type}`;
-      if (args.agent_type) extra.agent_type = `eq.${args.agent_type}`;
+      // Prefer `direction`; accept legacy `type` from older tool clients.
+      const direction = args.direction || args.type;
+      if (direction) extra.direction = `eq.${direction}`;
+      if (args.provider) extra.provider = `eq.${args.provider}`;
       if (args.language) {
         const lang = String(args.language).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16);
         if (!lang) throw new Error('Invalid language filter.');
-        // language is a text[] column in Callin; cs = contains.
-        extra.language = `cs.{${lang}}`;
+        extra.primary_language = `eq.${lang}`;
       }
-      return this.paginate('ai_agents', userId, AGENT_FIELDS, args, extra);
+      return this.paginate('generic_agents', userId, AGENT_FIELDS, args, extra);
     }
 
     if (name === 'get_agent') {
-      const rows = await this.query('ai_agents', userId, AGENT_FIELDS, {
+      const rows = await this.query('generic_agents', userId, AGENT_FIELDS, {
         id: `eq.${args.agentId}`,
         limit: '1',
       });
@@ -170,7 +178,10 @@ export class Backend {
         const ids = await this.resolveAgentIdsByTitle(userId, args.agentTitle);
         if (!ids.length) return { items: [], next_offset: null };
         if (args.agentId && !ids.includes(args.agentId)) return { items: [], next_offset: null };
-        if (!args.agentId) extra.agent_id = `in.(${ids.join(',')})`;
+        if (!args.agentId) {
+          // Match either legacy or generic agent foreign keys.
+          extra.or = `(generic_agent_id.in.(${ids.join(',')}),agent_id.in.(${ids.join(',')}))`;
+        }
       }
       return this.paginate('calls', userId, CALL_FIELDS, args, extra);
     }

@@ -418,7 +418,9 @@ test('adapter applies immutable ownership filters and excludes secrets', async (
     assert.equal(u.searchParams.get('user_id'), `eq.${userId}`);
     assert.ok(!u.searchParams.get('select').includes('*'));
     assert.ok(!u.searchParams.get('select').includes('webhook'));
+    assert.ok(!u.searchParams.get('select').includes('prompt'));
   }
+  assert.ok(seen.some((u) => u.pathname.endsWith('/generic_agents')));
   await backend.query('calls', userId, 'id', { user_id: 'eq.victim' });
   assert.equal(seen.at(-1).searchParams.get('user_id'), `eq.${userId}`);
 });
@@ -450,7 +452,7 @@ test('search_calls resolves agent title without raw SQL and respects ownership',
     async (url) => {
       const u = new URL(url);
       seen.push(u);
-      if (u.pathname.endsWith('/ai_agents')) {
+      if (u.pathname.endsWith('/generic_agents')) {
         return new Response(JSON.stringify([{ id: userId }]));
       }
       return new Response(JSON.stringify([{ id: otherId, contact_number: '+1555' }]));
@@ -458,12 +460,12 @@ test('search_calls resolves agent title without raw SQL and respects ownership',
   );
   const result = await backend.run('search_calls', { agentTitle: 'Sales%,drop' }, userId);
   assert.equal(result.items.length, 1);
-  const agentQuery = seen.find((u) => u.pathname.endsWith('/ai_agents'));
+  const agentQuery = seen.find((u) => u.pathname.endsWith('/generic_agents'));
   const callQuery = seen.find((u) => u.pathname.endsWith('/calls'));
-  assert.ok(agentQuery.searchParams.get('title').includes('Sales'));
-  assert.ok(!agentQuery.searchParams.get('title').includes('%'));
+  assert.ok(agentQuery.searchParams.get('name').includes('Sales'));
+  assert.ok(!agentQuery.searchParams.get('name').includes('%'));
   assert.equal(callQuery.searchParams.get('user_id'), `eq.${userId}`);
-  assert.equal(callQuery.searchParams.get('agent_id'), `in.(${userId})`);
+  assert.ok(callQuery.searchParams.get('or')?.includes(userId));
 });
 
 test('list_calls date and status filters are applied safely', async () => {
@@ -487,7 +489,10 @@ test('list_calls date and status filters are applied safely', async () => {
   );
   const u = seen[0];
   assert.equal(u.searchParams.get('status'), 'eq.completed');
-  assert.equal(u.searchParams.get('agent_id'), `eq.${userId}`);
+  assert.equal(
+    u.searchParams.get('or'),
+    `(agent_id.eq.${userId},generic_agent_id.eq.${userId})`
+  );
   assert.deepEqual(u.searchParams.getAll('started_at'), [
     'gte.2026-01-01T00:00:00Z',
     'lte.2026-01-31T23:59:59Z',
