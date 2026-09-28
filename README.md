@@ -27,7 +27,14 @@ Data access uses server-side Supabase (service role) with an **immutable `user_i
 
 Scopes also include `account:read` and optional `offline_access` (refresh).
 
-Agents are read only from Callin `generic_agents` (same as the Callin app). Calls use `calls` (`user_id`, `transcription_url`, `contact_number`, `direction`, `status`, `agent_id` / `generic_agent_id`, …). Legacy `ai_agents` is never used for listing agents.
+Tool behaviour mirrors the Callin V2 API (`GET /agent`, `GET /agent/:id`, `GET /call/list`):
+
+- **Team scope** — same as `getTeamOwner()`: active team members act on the team owner's account (agents: owner + self; calls: owner).
+- **Agents** — only `generic_agents` with provider `elevenlabs` / `livekit` / `vapi` (legacy `ai_agents` is never read). Name search, direction filter, and `created_at` / `name` / `sort_order` sorting.
+- **Calls** — hidden statuses: `failed`, `error`, `scheduled`, `opted_out`, `blocked`. Date range filters `created_at`; agent filter uses `generic_agent_id`; `duration` is minutes; `contactNumber` is a digit substring match; `q` searches contact number, caller number, transcript and summary.
+- **Transcripts** — text stored in `calls.transcription_url` (plus `transfer_call_transcription`), with literal `\n` normalised.
+
+Unlike the Callin API, `get_agent` always enforces ownership and never returns prompts, webhooks or secrets.
 
 ---
 

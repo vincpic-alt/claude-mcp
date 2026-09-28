@@ -20,6 +20,17 @@ const requireThat = (condition, status = 400, error = 'invalid_request') => {
   if (!condition) throw new Failure(status, error);
 };
 
+async function callinUser(backend, req) {
+  const token = req.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
+  requireThat(token, 401, 'login_required');
+  try {
+    return await backend.user(token);
+  } catch (e) {
+    if (e.code === 'login_required') throw new Failure(401, 'login_required');
+    throw e;
+  }
+}
+
 function assertOrigin(value, key, { allowHttpLocal = false } = {}) {
   const u = new URL(value);
   const isLocalHttp =
@@ -327,9 +338,7 @@ export function createApp(config, { store = new Store(config.dbPath), backend = 
         requireThat(typeof b.approve === 'boolean');
         let user;
         if (b.approve) {
-          const token = req.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
-          requireThat(token, 401, 'login_required');
-          user = await backend.user(token);
+          user = await callinUser(backend, req);
         }
         const redirect = new URL(pending.redirect_uri);
         redirect.searchParams.set('state', pending.state);
@@ -429,9 +438,7 @@ export function createApp(config, { store = new Store(config.dbPath), backend = 
       ) {
         // Callin SPA only — authenticates the Callin user via Supabase session token.
         requireThat(origin === config.appOrigin, 403, 'invalid_origin');
-        const token = req.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
-        requireThat(token, 401, 'login_required');
-        const user = await backend.user(token);
+        const user = await callinUser(backend, req);
         const scopeSet = new Set();
         let connected = false;
         const rows = store.db.prepare("SELECT value FROM records WHERE kind='grant' AND expires>?").all(Date.now());
@@ -449,9 +456,7 @@ export function createApp(config, { store = new Store(config.dbPath), backend = 
 
       if (path === '/oauth/disconnect' && req.method === 'POST') {
         requireThat(origin === config.appOrigin, 403, 'invalid_origin');
-        const token = req.headers.authorization?.match(/^Bearer (\S+)$/)?.[1];
-        requireThat(token, 401, 'login_required');
-        const user = await backend.user(token);
+        const user = await callinUser(backend, req);
         store.transaction(() => {
           const rows = store.db.prepare("SELECT id,value FROM records WHERE kind='grant'").all();
           for (const row of rows) {

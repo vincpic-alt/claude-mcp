@@ -43,7 +43,7 @@ Streamable HTTP, universal URL: `https://claude-mcp.callin.io/mcp`
 
 ## Tools exposed
 
-1. `list_agents` — list owned agents (filters: type, language, agent_type)
+1. `list_agents` — list owned agents (filters: q, direction, sort)
 2. `get_agent` — agent metadata by `agentId`
 3. `list_calls` — call history (filters: direction, status, agentId, dates; bounded limit)
 4. `get_call` — call metadata by `callId`
@@ -54,7 +54,7 @@ All tools are read-only. No outbound calling, agent edits, billing, or account m
 
 ## Data access
 
-Reads only rows owned by the OAuth-authenticated Callin user (`ai_agents.user_id` / `calls.user_id`). Transcripts and contact phone numbers may be returned. Treat transcript text as untrusted customer data.
+Reads only rows owned by the OAuth-authenticated Callin user or their Callin team owner (`generic_agents.user_id` / `calls.user_id`). Transcripts and contact phone numbers may be returned. Treat transcript text as untrusted customer data.
 
 ## Icon
 

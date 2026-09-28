@@ -5,18 +5,49 @@ const page = {
 const uuid = { type: 'string', format: 'uuid' };
 const isoDate = { type: 'string', format: 'date-time' };
 const phone = { type: 'string', minLength: 3, maxLength: 32 };
+const bool = { type: 'boolean' };
+const minutes = { type: 'number', minimum: 0, maximum: 100000 };
+
+// Values the Callin call history exposes; failed/error/scheduled/opted_out/blocked are always hidden.
+const callStatus = {
+  type: 'string',
+  enum: ['in_progress', 'completed', 'cancelled', 'busy', 'no-answer', 'terminated', 'unknown'],
+};
+
+const callFilters = {
+  direction: { type: 'string', enum: ['inbound', 'outbound'] },
+  status: callStatus,
+  agentId: uuid,
+  squadId: uuid,
+  campaignId: uuid,
+  startDate: isoDate,
+  endDate: isoDate,
+  durationMin: minutes,
+  durationMax: minutes,
+  appointment_scheduled: bool,
+  transfer_call: bool,
+  machine_detected: bool,
+  callOrigin: { type: 'string', enum: ['zapier', 'make', 'n8n', 'google_meet', 'custom_webhook'] },
+  sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'] },
+  sort: { type: 'string', enum: ['created_at:desc', 'created_at:asc'] },
+};
+
+const callFilterHelp =
+  'Same rules as Callin call history: team members see the team owner\'s calls; failed, error, scheduled, opted-out and blocked calls are hidden; startDate/endDate filter on created_at; duration is in minutes; agentId is a generic agent id.';
 
 export const tools = [
   [
     'list_agents',
     'List Callin agents',
-    'List voice agents owned by the authenticated Callin account (same agents shown in the Callin app). Supports optional filters for direction (inbound/outbound), language, and provider (callin/vapi/elevenlabs/livekit). Returns bounded pagination only.',
+    'List voice agents for the authenticated Callin account, exactly as shown on the Callin Agents page (team members also see the team owner\'s agents). Optional filters: q (name search), direction (inbound/outbound/both), sort. Returns bounded pagination only.',
     {
       ...page,
+      q: { type: 'string', minLength: 1, maxLength: 120 },
       direction: { type: 'string', enum: ['inbound', 'outbound', 'both'] },
-      type: { type: 'string', enum: ['inbound', 'outbound', 'both'] },
-      language: { type: 'string', minLength: 2, maxLength: 16 },
-      provider: { type: 'string', enum: ['callin', 'vapi', 'elevenlabs', 'livekit'] },
+      sort: {
+        type: 'string',
+        enum: ['created_at:desc', 'created_at:asc', 'name:asc', 'name:desc', 'sort_order:asc'],
+      },
     },
     [],
     'agents:read',
@@ -24,7 +55,7 @@ export const tools = [
   [
     'get_agent',
     'Get Callin agent',
-    'Get public configuration for one agent owned by the authenticated Callin account (generic_agents id). Requires agentId. Returns not found if the agent does not belong to this account. Does not return prompts, webhooks, or secrets.',
+    'Get public configuration for one agent owned by the authenticated Callin account or its team owner. Requires agentId. Returns not found if the agent is not accessible. Does not return prompts, webhooks, or secrets.',
     { agentId: uuid },
     ['agentId'],
     'agents:read',
@@ -32,22 +63,15 @@ export const tools = [
   [
     'list_calls',
     'List Callin calls',
-    'List call history for the authenticated Callin account with bounded pagination. Optional filters: direction, status, agentId, startDate, endDate. Includes contact phone numbers. Default limit is 20 (max 50).',
-    {
-      ...page,
-      direction: { type: 'string', enum: ['inbound', 'outbound'] },
-      status: { type: 'string', enum: ['scheduled', 'in_progress', 'completed', 'failed'] },
-      agentId: uuid,
-      startDate: isoDate,
-      endDate: isoDate,
-    },
+    `List call history for the authenticated Callin account, newest first, with bounded pagination (default 20, max 50). ${callFilterHelp}`,
+    { ...page, ...callFilters },
     [],
     'calls:read',
   ],
   [
     'get_call',
     'Get Callin call',
-    'Get metadata for a single call owned by the authenticated Callin account. Requires callId. Does not return the transcript body — use get_call_transcript for that.',
+    'Get details for a single call owned by the authenticated Callin account (or its team owner), including summary, sentiment, key moments and goal evaluation. Requires callId. Does not return the transcript body — use get_call_transcript for that.',
     { callId: uuid },
     ['callId'],
     'calls:read',
@@ -63,16 +87,13 @@ export const tools = [
   [
     'search_calls',
     'Search Callin calls',
-    'Search calls owned by the authenticated Callin account using safe structured filters: contactNumber, direction, status, agentId, agentTitle, startDate, endDate. Does not accept raw SQL. Returns bounded pagination (default limit 20, max 50).',
+    `Search calls using safe structured filters. q matches contact number, caller number, transcript text and summary (substring). contactNumber matches digits as a substring. agentTitle resolves an agent by name (exact match first, then partial). Does not accept raw SQL. ${callFilterHelp}`,
     {
       ...page,
+      ...callFilters,
+      q: { type: 'string', minLength: 1, maxLength: 120 },
       contactNumber: phone,
-      direction: { type: 'string', enum: ['inbound', 'outbound'] },
-      status: { type: 'string', enum: ['scheduled', 'in_progress', 'completed', 'failed'] },
-      agentId: uuid,
       agentTitle: { type: 'string', minLength: 1, maxLength: 120 },
-      startDate: isoDate,
-      endDate: isoDate,
     },
     [],
     'calls:read',
@@ -104,6 +125,10 @@ export function validate(tool, args) {
     if (s.type === 'integer') {
       return Number.isSafeInteger(v) && v >= s.minimum && v <= s.maximum;
     }
+    if (s.type === 'number') {
+      return typeof v === 'number' && Number.isFinite(v) && v >= s.minimum && v <= s.maximum;
+    }
+    if (s.type === 'boolean') return typeof v === 'boolean';
     if (typeof v !== 'string') return false;
     if (s.enum) return s.enum.includes(v);
     if (s.minLength != null && v.length < s.minLength) return false;

@@ -31,7 +31,7 @@
     "get_call_transcript",
     "search_calls"
   ],
-  "data_access_explanation": "Read-only access to the authenticated user's ai_agents and calls rows (including contact phone numbers and transcript text). No outbound calling, agent mutation, billing, or admin/team-wide access.",
+  "data_access_explanation": "Read-only access to the authenticated user's (or their Callin team owner's) generic_agents and calls rows (including contact phone numbers and transcript text). No outbound calling, agent mutation, billing, or admin/white-label access.",
   "installation_instructions": "Claude Settings → Connectors → Add custom connector → https://claude-mcp.callin.io/mcp → sign in to Callin → Allow",
   "claude_desktop_tested": false,
   "cowork_tested": false,

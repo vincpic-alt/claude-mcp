@@ -37,7 +37,9 @@ async function setup(t, { scope = 'account:read agents:read calls:read transcrip
     store,
     backend: {
       user: async (token) => {
-        assert.equal(token, 'supabase-user-token');
+        if (token !== 'supabase-user-token') {
+          throw Object.assign(new Error('Sign in to Callin again.'), { code: 'login_required' });
+        }
         return { id: userId };
       },
       run: async (name, args, uid) => ({ name, args, userId: uid }),
@@ -397,6 +399,11 @@ test('integration status reports connected scopes without exposing tokens', asyn
     ).status,
     403
   );
+  const expired = await f.call('/api/integration/status', {
+    headers: { Origin: f.config.appOrigin, Authorization: 'Bearer expired-or-foreign-token' },
+  });
+  assert.equal(expired.status, 401);
+  assert.equal(expired.data.error, 'login_required');
 });
 
 test('adapter applies immutable ownership filters and excludes secrets', async () => {
@@ -414,7 +421,9 @@ test('adapter applies immutable ownership filters and excludes secrets', async (
   await backend.run('get_call', { callId: userId }, userId);
   await backend.run('get_call_transcript', { callId: userId }, userId);
   await backend.run('search_calls', { contactNumber: '+15551212', direction: 'inbound' }, userId);
-  for (const u of seen) {
+  const dataRequests = seen.filter((u) => /\/(calls|generic_agents)$/.test(u.pathname));
+  assert.ok(dataRequests.length >= 6);
+  for (const u of dataRequests) {
     assert.equal(u.searchParams.get('user_id'), `eq.${userId}`);
     assert.ok(!u.searchParams.get('select').includes('*'));
     assert.ok(!u.searchParams.get('select').includes('webhook'));
@@ -434,8 +443,8 @@ test('cross-account records produce not found; external transcript URLs are neve
   );
   await assert.rejects(() => absent.run('get_call', { callId: userId }, userId), /not found/);
   let requests = 0;
-  const backend = new Backend(config, async () => {
-    requests++;
+  const backend = new Backend(config, async (url) => {
+    if (!/\/(teams|team_members)$/.test(new URL(url).pathname)) requests++;
     return new Response(
       JSON.stringify([{ id: userId, transcription_url: 'http://169.254.169.254/latest/meta-data' }])
     );
@@ -463,9 +472,103 @@ test('search_calls resolves agent title without raw SQL and respects ownership',
   const agentQuery = seen.find((u) => u.pathname.endsWith('/generic_agents'));
   const callQuery = seen.find((u) => u.pathname.endsWith('/calls'));
   assert.ok(agentQuery.searchParams.get('name').includes('Sales'));
-  assert.ok(!agentQuery.searchParams.get('name').includes('%'));
+  assert.ok(!/(^|[^\\])%/.test(agentQuery.searchParams.get('name')));
+  assert.equal(agentQuery.searchParams.get('provider'), 'in.(elevenlabs,livekit,vapi)');
   assert.equal(callQuery.searchParams.get('user_id'), `eq.${userId}`);
-  assert.ok(callQuery.searchParams.get('or')?.includes(userId));
+  assert.equal(callQuery.searchParams.get('generic_agent_id'), `in.(${userId})`);
+});
+
+test('team members see the team owner calls and both owner and own agents', async () => {
+  const ownerId = '33333333-3333-4333-8333-333333333333';
+  const seen = [];
+  const backend = new Backend(
+    { supabase: 'https://example.supabase.co', serviceKey: 'test-only' },
+    async (url) => {
+      const u = new URL(url);
+      seen.push(u);
+      if (u.pathname.endsWith('/teams')) return new Response('[]');
+      if (u.pathname.endsWith('/team_members')) {
+        if (u.searchParams.get('select') === 'email') {
+          return new Response(JSON.stringify([{ email: 'member@example.com' }]));
+        }
+        return new Response(JSON.stringify([{ teams: { owner_id: ownerId } }]));
+      }
+      return new Response('[]');
+    }
+  );
+  await backend.run('list_agents', {}, userId);
+  await backend.run('list_calls', {}, userId);
+  const agents = seen.find((u) => u.pathname.endsWith('/generic_agents'));
+  const calls = seen.find((u) => u.pathname.endsWith('/calls'));
+  assert.equal(agents.searchParams.get('user_id'), `in.(${ownerId},${userId})`);
+  assert.equal(calls.searchParams.get('user_id'), `eq.${ownerId}`);
+  assert.equal(seen.filter((u) => u.pathname.endsWith('/teams')).length, 1);
+});
+
+test('list_agents mirrors Callin agents page filters and ordering', async () => {
+  const seen = [];
+  const backend = new Backend(
+    { supabase: 'https://example.supabase.co', serviceKey: 'test-only' },
+    async (url) => {
+      seen.push(new URL(url));
+      return new Response(JSON.stringify([{ id: userId }]));
+    }
+  );
+  await backend.run('list_agents', { q: 'Sales_Bot', direction: 'both', sort: 'name:asc' }, userId);
+  const u = seen.find((x) => x.pathname.endsWith('/generic_agents'));
+  assert.equal(u.searchParams.get('provider'), 'in.(elevenlabs,livekit,vapi)');
+  assert.equal(u.searchParams.get('direction'), 'eq.both');
+  assert.equal(u.searchParams.get('name'), 'ilike.*Sales\\_Bot*');
+  assert.equal(u.searchParams.get('order'), 'name.asc,id.asc');
+});
+
+test('call queries hide the same statuses as Callin call history', async () => {
+  const seen = [];
+  const backend = new Backend(
+    { supabase: 'https://example.supabase.co', serviceKey: 'test-only' },
+    async (url) => {
+      seen.push(new URL(url));
+      return new Response(JSON.stringify([{ id: userId, transcription_url: 'Assistant: Hi\\nUser: Hello' }]));
+    }
+  );
+  await backend.run('list_calls', { status: 'completed' }, userId);
+  await backend.run('get_call', { callId: userId }, userId);
+  const transcript = await backend.run('get_call_transcript', { callId: userId }, userId);
+  const calls = seen.filter((u) => u.pathname.endsWith('/calls'));
+  assert.equal(calls.length, 3);
+  for (const u of calls) {
+    assert.ok(
+      u.searchParams
+        .getAll('status')
+        .includes('not.in.(failed,error,ERROR,Error,scheduled,opted_out,blocked)')
+    );
+  }
+  assert.ok(calls[0].searchParams.getAll('status').includes('eq.completed'));
+  assert.equal(transcript.transcript, 'Assistant: Hi\nUser: Hello');
+});
+
+test('search_calls q and contact number match Callin substring search', async () => {
+  const seen = [];
+  const backend = new Backend(
+    { supabase: 'https://example.supabase.co', serviceKey: 'test-only' },
+    async (url) => {
+      seen.push(new URL(url));
+      return new Response('[]');
+    }
+  );
+  await backend.run(
+    'search_calls',
+    { q: 'refund, please', contactNumber: '+1 (555) 12', sentiment: 'negative', transfer_call: true },
+    userId
+  );
+  const u = seen.find((x) => x.pathname.endsWith('/calls'));
+  assert.equal(u.searchParams.get('contact_number'), 'ilike.*155512*');
+  assert.equal(u.searchParams.get('transfer_call'), 'eq.true');
+  assert.equal(u.searchParams.get('sentiments'), 'cs.{"sentiment_overall":"negative"}');
+  const or = u.searchParams.get('or');
+  for (const col of ['contact_number', 'transcription_url', 'caller_number', 'transcript_summary']) {
+    assert.ok(or.includes(`${col}.ilike.*refund\\, please*`));
+  }
 });
 
 test('list_calls date and status filters are applied safely', async () => {
@@ -487,13 +590,10 @@ test('list_calls date and status filters are applied safely', async () => {
     },
     userId
   );
-  const u = seen[0];
-  assert.equal(u.searchParams.get('status'), 'eq.completed');
-  assert.equal(
-    u.searchParams.get('or'),
-    `(agent_id.eq.${userId},generic_agent_id.eq.${userId})`
-  );
-  assert.deepEqual(u.searchParams.getAll('started_at'), [
+  const u = seen.find((x) => x.pathname.endsWith('/calls'));
+  assert.ok(u.searchParams.getAll('status').includes('eq.completed'));
+  assert.equal(u.searchParams.get('generic_agent_id'), `eq.${userId}`);
+  assert.deepEqual(u.searchParams.getAll('created_at'), [
     'gte.2026-01-01T00:00:00Z',
     'lte.2026-01-31T23:59:59Z',
   ]);
@@ -504,6 +604,10 @@ test('tool argument validation rejects unsafe shapes', () => {
   assert.equal(validate(list, { limit: 20 }), true);
   assert.equal(validate(list, { userId }), false);
   assert.equal(validate(list, { status: 'hacked' }), false);
+  assert.equal(validate(list, { status: 'failed' }), false);
+  assert.equal(validate(list, { durationMin: 1.5, transfer_call: false }), true);
+  assert.equal(validate(list, { durationMin: '1' }), false);
+  assert.equal(validate(list, { transfer_call: 'yes' }), false);
   assert.equal(validate(tools.find((t) => t.name === 'get_call'), { callId: 'not-a-uuid' }), false);
   assert.equal(validate(tools.find((t) => t.name === 'search_calls'), { contactNumber: 'ab' }), false);
 });
